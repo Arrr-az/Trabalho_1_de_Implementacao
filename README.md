@@ -2,4 +2,5 @@
 Trabalho 1 de Implementação para a disciplina de Sistemas Distribuídos. Algoritmos implementados:
 
 - Relógio de Lamport
-- Algoritmo do Valentão
+- Exclusão Mútua - Algoritmo Centralizado (processo coordenador)
+- Exclusão Mútua - Algoritmo Descentralizado (Token Ring)
