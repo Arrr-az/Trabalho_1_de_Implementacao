@@ -3,4 +3,4 @@ Trabalho 1 de Implementação para a disciplina de Sistemas Distribuídos. Algor
 
 - Relógio de Lamport
 - Exclusão Mútua - Algoritmo Centralizado (processo coordenador)
-- Exclusão Mútua - Algoritmo Descentralizado (Token Ring)
+- Exclusão Mútua - Algoritmo Descentralizado
