@@ -1,21 +1,25 @@
 package app;
 
 import java.net.*;
+import java.util.*;
+import java.text.SimpleDateFormat;
 
 public class Processo implements Runnable {
-    private int id;
-    private Token token;
-    private InetAddress enderecoProximo;
-    private int portaProximo;
-    private DatagramSocket socket;
+    private static final int PORTA = 12345;
+    private static final String IP_BROADCAST = "255.255.255.255";
+    private static final int TEMPO_CRITICO = 2000; // Tempo de uso da região crítica em milissegundos
 
-    public Processo(int id, InetAddress enderecoProximo, int portaProximo) {
+    private DatagramSocket socket;
+    private int id;
+    private boolean naRegiaoCritica = false;
+    private List<Requisicao> fila = new LinkedList<>();
+    private SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+
+    public Processo(int id) {
         this.id = id;
-        this.enderecoProximo = enderecoProximo;
-        this.portaProximo = portaProximo;
-        this.token = new Token(id == 1); // Setando manualmente que o token começa com o primeiro processo
         try {
-            this.socket = new DatagramSocket(50000 + id);
+            this.socket = new DatagramSocket();
+            this.socket.setBroadcast(true);
         } catch (SocketException e) {
             e.printStackTrace();
         }
@@ -23,55 +27,108 @@ public class Processo implements Runnable {
 
     @Override
     public void run() {
-        while (true) {
-            try {
-                if (token.possuiToken()) {
-                    // Entra na região crítica
-                    System.out.println("Processo " + id + " entrou na região crítica.");
-                    Thread.sleep(3000); // Usa a região crítica por 3 segundos
+        try {
+            // Solicita acesso à região crítica
+            requisitarAcesso();
 
-                    // Sai da região crítica e passa o token pro próximo processo
-                    System.out.println("Processo " + id + " saindo da região crítica.");
-                    enviarToken();
-                }
-                else {
-                    // Espera receber o token
-                    byte[] buffer = new byte[256];
-                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                    socket.receive(packet);
+            // Processa mensagens recebidas
+            while (true) {
+                byte[] buffer = new byte[256];
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                socket.receive(packet);
+                String mensagem = new String(packet.getData(), 0, packet.getLength());
+                processarMensagem(mensagem, packet.getAddress(), packet.getPort());
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            socket.close();
+        }
+    }
 
-                    String mensagem = new String(packet.getData(), 0, packet.getLength());
-                    if (mensagem.equals("TOKEN")) {
-                        token.setToken(true);
-                    }
+    private void requisitarAcesso() throws Exception {
+        String mensagem = "REQUISICAO:" + id + ":" + sdf.format(new Date());
+        enviarMensagem(mensagem);
+    }
+
+    private void processarMensagem(String mensagem, InetAddress endereco, int porta) throws Exception {
+        String[] partes = mensagem.split(":");
+        if (partes[0].equals("REQUISICAO")) {
+            int idSolicitante = Integer.parseInt(partes[1]);
+            String timestampSolicitante = partes[2];
+
+            synchronized (this) {
+                if (naRegiaoCritica) {
+                    fila.add(new Requisicao(idSolicitante, timestampSolicitante, endereco, porta));
+                    System.out.println("Processo " + id + " enfileirou requisição de " + idSolicitante);
+                } else {
+                    enviarMensagem("OK", endereco, porta);
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+            }
+        } else if (partes[0].equals("OK")) {
+            System.out.println("Processo " + id + " recebeu OK.");
+            synchronized (this) {
+                if (!naRegiaoCritica) {
+                    entrarNaRegiaoCritica();
+                }
+            }
+        } else if (partes[0].equals("LIBERACAO")) {
+            System.out.println("Processo " + id + " recebeu LIBERACAO.");
+            synchronized (this) {
+                processarFila();
             }
         }
     }
 
-    private void enviarToken() throws Exception {
-        token.setToken(false); // Remove o token do processo atual
-        String mensagem = "TOKEN";
-        byte[] buffer = mensagem.getBytes();
-        DatagramPacket packet = new DatagramPacket(buffer, buffer.length, enderecoProximo, portaProximo);
-        socket.send(packet);
-        System.out.println("Processo " + id + " passou o token para o próximo processo.");
+    private void entrarNaRegiaoCritica() throws Exception {
+        naRegiaoCritica = true;
+        System.out.println("Processo " + id + " entrou na região crítica.");
+        Thread.sleep(TEMPO_CRITICO);
+        System.out.println("Processo " + id + " saindo da região crítica.");
+        naRegiaoCritica = false;
+        enviarMensagem("LIBERACAO");
     }
 
-    public static void main(String[] args) throws UnknownHostException {
-        // Anel com 3 processos
-        InetAddress endereco1 = InetAddress.getByName("localhost");
-        InetAddress endereco2 = InetAddress.getByName("localhost");
-        InetAddress endereco3 = InetAddress.getByName("localhost");
+    private void processarFila() throws Exception {
+        if (!fila.isEmpty()) {
+            Requisicao requisicao = fila.remove(0);
+            enviarMensagem("OK", requisicao.endereco, requisicao.porta);
+            System.out.println("Processo " + id + " enviou OK para " + requisicao.id);
+        }
+    }
 
-        Processo p1 = new Processo(1, endereco2, 50002);
-        Processo p2 = new Processo(2, endereco3, 50003);
-        Processo p3 = new Processo(3, endereco1, 50001);
+    private void enviarMensagem(String mensagem) throws Exception {
+        byte[] buffer = mensagem.getBytes();
+        InetAddress enderecoBroadcast = InetAddress.getByName(IP_BROADCAST);
+        DatagramPacket packet = new DatagramPacket(buffer, buffer.length, enderecoBroadcast, PORTA);
+        socket.send(packet);
+        System.out.println("Processo " + id + " enviando " + mensagem + " para o broadcast.");
+    }
 
-        new Thread(p1).start();
-        new Thread(p2).start();
-        new Thread(p3).start();
+    private void enviarMensagem(String mensagem, InetAddress endereco, int porta) throws Exception {
+        byte[] buffer = mensagem.getBytes();
+        DatagramPacket packet = new DatagramPacket(buffer, buffer.length, endereco, porta);
+        socket.send(packet);
+        System.out.println("Processo " + id + " enviando " + mensagem + " para " + endereco + ":" + porta);
+    }
+
+    public static void main(String[] args) {
+        for (int i = 1; i <= 5; i++) {
+            new Thread(new Processo(i)).start();
+        }
+    }
+
+    private static class Requisicao {
+        int id;
+        String timestamp;
+        InetAddress endereco;
+        int porta;
+
+        Requisicao(int id, String timestamp, InetAddress endereco, int porta) {
+            this.id = id;
+            this.timestamp = timestamp;
+            this.endereco = endereco;
+            this.porta = porta;
+        }
     }
 }

@@ -1,4 +1,5 @@
-app\Coordenador$ProcessoInfo.class
+app\Processador.class
+com\pss\ex_exclusaodescentralizado\ExclusaoDescentralizado.class
 app\Processo.class
-app\Coordenador.class
-com\pss\ex_eleicaocentralizado\Ex_EleicaoCentralizado.class
+app\Processador$Requisicao.class
+app\Processo$Requisicao.class
